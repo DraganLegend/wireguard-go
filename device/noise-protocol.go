@@ -17,8 +17,8 @@ import (
 
 	"golang.zx2c4.com/wireguard/tai64n"
 
-	// Kyber1024 - CRYSTALS Kyber PQC KEM
-	kyberk2so "github.com/symbolicsoft/kyber-k2so"
+	// ML-KEM-768 - PQC KEM
+	mlkem "filippo.io/mlkem768"
 	//
 )
 
@@ -64,10 +64,10 @@ const (
 )
 
 const (
-	// Kyber1024
-	MessageInitiationSize      = (148 + kyberk2so.Kyber1024PKBytes)            // size of handshake initiation message
-	// Kyber1024
-	MessageResponseSize        = (92 + kyberk2so.Kyber1024CTBytes)             // size of response message
+	// ML-KEM-768
+	MessageInitiationSize = (148 + mlkem.EncapsulationKeySize) // size of handshake initiation message
+	// ML-KEM-768
+	MessageResponseSize        = (92 + mlkem.CiphertextSize)                   // size of response message
 	MessageCookieReplySize     = 64                                            // size of cookie reply message
 	MessageTransportHeaderSize = 16                                            // size of data preceding content in transport message
 	MessageTransportSize       = MessageTransportHeaderSize + poly1305.TagSize // size of empty transport
@@ -94,11 +94,11 @@ type MessageInitiation struct {
 	Static    [NoisePublicKeySize + poly1305.TagSize]byte
 	Timestamp [tai64n.TimestampSize + poly1305.TagSize]byte
 	//
-	// Kyber1024 : Caution) The first character must be uppercase.
-	PqcPublickey [kyberk2so.Kyber1024PKBytes]byte
+	// ML-KEM-768 : Caution) The first character must be uppercase.
+	PqcPublickey []byte
 	//
-	MAC1      [blake2s.Size128]byte
-	MAC2      [blake2s.Size128]byte
+	MAC1 [blake2s.Size128]byte
+	MAC2 [blake2s.Size128]byte
 }
 
 type MessageResponse struct {
@@ -108,11 +108,11 @@ type MessageResponse struct {
 	Ephemeral NoisePublicKey
 	Empty     [poly1305.TagSize]byte
 	//
-	// Kyber1024 : Caution) The first character must be uppercase.
-	PqcCiphertext [kyberk2so.Kyber1024CTBytes]byte
+	// ML-KEM-768 : Caution) The first character must be uppercase.
+	PqcCiphertext []byte
 	//
-	MAC1      [blake2s.Size128]byte
-	MAC2      [blake2s.Size128]byte
+	MAC1 [blake2s.Size128]byte
+	MAC2 [blake2s.Size128]byte
 }
 
 type MessageTransport struct {
@@ -129,11 +129,11 @@ type MessageCookieReply struct {
 	Cookie   [blake2s.Size128 + poly1305.TagSize]byte
 }
 
-// Kyber1024
+// ML-KEM-768
 type noisePqcKem struct {
-	pqcPK [kyberk2so.Kyber1024PKBytes]byte
-	pqcSK [kyberk2so.Kyber1024SKBytes]byte
+	dk *mlkem.DecapsulationKey
 }
+
 //
 
 type Handshake struct {
@@ -151,9 +151,9 @@ type Handshake struct {
 	lastTimestamp             tai64n.Timestamp
 	lastInitiationConsumption time.Time
 	lastSentHandshake         time.Time
-	// Kyber1024
-	pqcKem                    noisePqcKem
-	pqcCiphertext             [kyberk2so.Kyber1024CTBytes]byte
+	// ML-KEM-768
+	pqcKem        noisePqcKem
+	pqcCiphertext []byte
 	//
 }
 
@@ -269,16 +269,13 @@ func (device *Device) CreateMessageInitiation(peer *Peer) (*MessageInitiation, e
 
 	handshake.mixHash(msg.Timestamp[:])
 
-	// Kyber1024 - crypto_kem_keypair()
-	var pqcerr error
-	handshake.pqcKem.pqcSK, handshake.pqcKem.pqcPK, pqcerr = kyberk2so.KemKeypair1024()
-	if pqcerr == nil {
-		msg.PqcPublickey = handshake.pqcKem.pqcPK
-		fmt.Printf("kyberk2so.KemKeypair1024() : msg.pqcPublickey = handshake.pqcKem.pqcPK !!!\n")
-	} else {
-		fmt.Printf("kyberk2so.KemKeypair1024() failed.\n")
+	// ML-KEM-768 key generation
+	dk, err := mlkem.GenerateKey()
+	if err != nil {
+		return nil, err
 	}
-	//
+	handshake.pqcKem.dk = dk
+	msg.PqcPublickey = dk.EncapsulationKey()
 
 	handshake.state = handshakeInitiationCreated
 	return &msg, nil
@@ -366,16 +363,18 @@ func (device *Device) ConsumeMessageInitiation(msg *MessageInitiation) *Peer {
 		return nil
 	}
 
-	//
-	// Kyber1024 - crypto_kem_enc()
-	var pqcerr error
-	handshake.pqcCiphertext, handshake.presharedKey, pqcerr = kyberk2so.KemEncrypt1024(msg.PqcPublickey)
-	if pqcerr != nil {
-		fmt.Printf("kyberk2so.KemEncrypt1024() failed.\n")
-	} else {
-		fmt.Printf("kyberk2so.KemEncrypt1024() OK.\n")
+	// ML-KEM-768 encapsulation
+	ciphertext, sharedKey, err := mlkem.Encapsulate(msg.PqcPublickey)
+	if err != nil {
+		// handle error, for example:
+		fmt.Printf("mlkem.Encapsulate() failed: %v\n", err)
 	}
-	//
+	handshake.pqcCiphertext = make([]byte, mlkem.CiphertextSize)
+	copy(handshake.pqcCiphertext, ciphertext)
+	// Convert sharedKey ([]byte) to NoisePresharedKey
+	var psk NoisePresharedKey
+	copy(psk[:], sharedKey)
+	handshake.presharedKey = psk
 
 	// update handshake state
 
@@ -495,16 +494,15 @@ func (device *Device) ConsumeMessageResponse(msg *MessageResponse) *Peer {
 		return nil
 	}
 
-	//
-	// Kyber1024 - crypto_kem_dec()
-	var pqcerr error
-	handshake.presharedKey, pqcerr = kyberk2so.KemDecrypt1024(msg.PqcCiphertext, handshake.pqcKem.pqcSK)
-	if pqcerr != nil {
-		fmt.Printf("kyberk2so.KemDecrypt1024() failed.\n")
-	} else {
-		fmt.Printf("kyberk2so.KemDecrypt1024() OK.\n")
+	// ML-KEM-768 decapsulation
+	sharedKey, err := mlkem.Decapsulate(handshake.pqcKem.dk, msg.PqcCiphertext)
+	if err != nil {
+		fmt.Printf("mlkem.Decapsulate() failed: %v\n", err)
 	}
-	//
+	// Convert sharedKey ([]byte) to NoisePresharedKey
+	var psk NoisePresharedKey
+	copy(psk[:], sharedKey)
+	handshake.presharedKey = psk
 
 	var (
 		hash     [blake2s.Size]byte
