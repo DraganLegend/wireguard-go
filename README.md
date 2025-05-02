@@ -55,7 +55,7 @@ $ make
 => for QR-WireGuard(Quantum Resistant WireGuard)
 $ git clone https://github.com/ChunghanYi/wireguard-go
 $ cd wireguard-go
-$ go get github.com/symbolicsoft/kyber-k2so
+$ go get filippo.io/mlkem768@latest
 $ make
 ```
 
