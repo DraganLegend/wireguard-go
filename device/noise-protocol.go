@@ -95,7 +95,7 @@ type MessageInitiation struct {
 	Timestamp [tai64n.TimestampSize + poly1305.TagSize]byte
 	//
 	// ML-KEM-768 : Caution) The first character must be uppercase.
-	PqcPublickey []byte
+	PqcPublickey [mlkem.EncapsulationKeySize]byte
 	//
 	MAC1 [blake2s.Size128]byte
 	MAC2 [blake2s.Size128]byte
@@ -109,7 +109,7 @@ type MessageResponse struct {
 	Empty     [poly1305.TagSize]byte
 	//
 	// ML-KEM-768 : Caution) The first character must be uppercase.
-	PqcCiphertext []byte
+	PqcCiphertext [mlkem.CiphertextSize]byte
 	//
 	MAC1 [blake2s.Size128]byte
 	MAC2 [blake2s.Size128]byte
@@ -153,7 +153,7 @@ type Handshake struct {
 	lastSentHandshake         time.Time
 	// ML-KEM-768
 	pqcKem        noisePqcKem
-	pqcCiphertext []byte
+	pqcCiphertext [mlkem.CiphertextSize]byte
 	//
 }
 
@@ -275,7 +275,7 @@ func (device *Device) CreateMessageInitiation(peer *Peer) (*MessageInitiation, e
 		return nil, err
 	}
 	handshake.pqcKem.dk = dk
-	msg.PqcPublickey = dk.EncapsulationKey()
+	copy(msg.PqcPublickey[:], dk.EncapsulationKey())
 
 	handshake.state = handshakeInitiationCreated
 	return &msg, nil
@@ -364,13 +364,13 @@ func (device *Device) ConsumeMessageInitiation(msg *MessageInitiation) *Peer {
 	}
 
 	// ML-KEM-768 encapsulation
-	ciphertext, sharedKey, err := mlkem.Encapsulate(msg.PqcPublickey)
+	ciphertext, sharedKey, err := mlkem.Encapsulate(msg.PqcPublickey[:])
 	if err != nil {
 		// handle error, for example:
 		fmt.Printf("mlkem.Encapsulate() failed: %v\n", err)
 	}
-	handshake.pqcCiphertext = make([]byte, mlkem.CiphertextSize)
-	copy(handshake.pqcCiphertext, ciphertext)
+	// Copy ciphertext into fixed-size array
+	copy(handshake.pqcCiphertext[:], ciphertext)
 	// Convert sharedKey ([]byte) to NoisePresharedKey
 	var psk NoisePresharedKey
 	copy(psk[:], sharedKey)
@@ -495,7 +495,7 @@ func (device *Device) ConsumeMessageResponse(msg *MessageResponse) *Peer {
 	}
 
 	// ML-KEM-768 decapsulation
-	sharedKey, err := mlkem.Decapsulate(handshake.pqcKem.dk, msg.PqcCiphertext)
+	sharedKey, err := mlkem.Decapsulate(handshake.pqcKem.dk, msg.PqcCiphertext[:])
 	if err != nil {
 		fmt.Printf("mlkem.Decapsulate() failed: %v\n", err)
 	}
