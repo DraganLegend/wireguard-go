@@ -16,6 +16,10 @@ import (
 	"golang.org/x/crypto/poly1305"
 
 	"golang.zx2c4.com/wireguard/tai64n"
+
+	// ML-KEM-768 - PQC KEM
+	mlkem "filippo.io/mlkem768"
+	//
 )
 
 type handshakeState int
@@ -60,8 +64,10 @@ const (
 )
 
 const (
-	MessageInitiationSize      = 148                                           // size of handshake initiation message
-	MessageResponseSize        = 92                                            // size of response message
+	// ML-KEM-768
+	MessageInitiationSize = (148 + mlkem.EncapsulationKeySize) // size of handshake initiation message
+	// ML-KEM-768
+	MessageResponseSize        = (92 + mlkem.CiphertextSize)                   // size of response message
 	MessageCookieReplySize     = 64                                            // size of cookie reply message
 	MessageTransportHeaderSize = 16                                            // size of data preceding content in transport message
 	MessageTransportSize       = MessageTransportHeaderSize + poly1305.TagSize // size of empty transport
@@ -87,8 +93,12 @@ type MessageInitiation struct {
 	Ephemeral NoisePublicKey
 	Static    [NoisePublicKeySize + poly1305.TagSize]byte
 	Timestamp [tai64n.TimestampSize + poly1305.TagSize]byte
-	MAC1      [blake2s.Size128]byte
-	MAC2      [blake2s.Size128]byte
+	//
+	// ML-KEM-768 : Caution) The first character must be uppercase.
+	PqcPublickey []byte
+	//
+	MAC1 [blake2s.Size128]byte
+	MAC2 [blake2s.Size128]byte
 }
 
 type MessageResponse struct {
@@ -97,8 +107,12 @@ type MessageResponse struct {
 	Receiver  uint32
 	Ephemeral NoisePublicKey
 	Empty     [poly1305.TagSize]byte
-	MAC1      [blake2s.Size128]byte
-	MAC2      [blake2s.Size128]byte
+	//
+	// ML-KEM-768 : Caution) The first character must be uppercase.
+	PqcCiphertext []byte
+	//
+	MAC1 [blake2s.Size128]byte
+	MAC2 [blake2s.Size128]byte
 }
 
 type MessageTransport struct {
@@ -115,6 +129,13 @@ type MessageCookieReply struct {
 	Cookie   [blake2s.Size128 + poly1305.TagSize]byte
 }
 
+// ML-KEM-768
+type noisePqcKem struct {
+	dk *mlkem.DecapsulationKey
+}
+
+//
+
 type Handshake struct {
 	state                     handshakeState
 	mutex                     sync.RWMutex
@@ -130,6 +151,10 @@ type Handshake struct {
 	lastTimestamp             tai64n.Timestamp
 	lastInitiationConsumption time.Time
 	lastSentHandshake         time.Time
+	// ML-KEM-768
+	pqcKem        noisePqcKem
+	pqcCiphertext []byte
+	//
 }
 
 var (
@@ -177,6 +202,9 @@ func init() {
 func (device *Device) CreateMessageInitiation(peer *Peer) (*MessageInitiation, error) {
 	device.staticIdentity.RLock()
 	defer device.staticIdentity.RUnlock()
+
+	//Kyber1024 debug codes
+	//fmt.Printf("CreateMessageInitiation() called.\n")
 
 	handshake := &peer.handshake
 	handshake.mutex.Lock()
@@ -240,6 +268,15 @@ func (device *Device) CreateMessageInitiation(peer *Peer) (*MessageInitiation, e
 	handshake.localIndex = msg.Sender
 
 	handshake.mixHash(msg.Timestamp[:])
+
+	// ML-KEM-768 key generation
+	dk, err := mlkem.GenerateKey()
+	if err != nil {
+		return nil, err
+	}
+	handshake.pqcKem.dk = dk
+	msg.PqcPublickey = dk.EncapsulationKey()
+
 	handshake.state = handshakeInitiationCreated
 	return &msg, nil
 }
@@ -249,6 +286,9 @@ func (device *Device) ConsumeMessageInitiation(msg *MessageInitiation) *Peer {
 		hash     [blake2s.Size]byte
 		chainKey [blake2s.Size]byte
 	)
+
+	//Kyber1024 debug codes
+	//fmt.Printf("ConsumeMessageInitiation() called.\n")
 
 	if msg.Type != MessageInitiationType {
 		return nil
@@ -323,6 +363,19 @@ func (device *Device) ConsumeMessageInitiation(msg *MessageInitiation) *Peer {
 		return nil
 	}
 
+	// ML-KEM-768 encapsulation
+	ciphertext, sharedKey, err := mlkem.Encapsulate(msg.PqcPublickey)
+	if err != nil {
+		// handle error, for example:
+		fmt.Printf("mlkem.Encapsulate() failed: %v\n", err)
+	}
+	handshake.pqcCiphertext = make([]byte, mlkem.CiphertextSize)
+	copy(handshake.pqcCiphertext, ciphertext)
+	// Convert sharedKey ([]byte) to NoisePresharedKey
+	var psk NoisePresharedKey
+	copy(psk[:], sharedKey)
+	handshake.presharedKey = psk
+
 	// update handshake state
 
 	handshake.mutex.Lock()
@@ -352,6 +405,9 @@ func (device *Device) CreateMessageResponse(peer *Peer) (*MessageResponse, error
 	handshake := &peer.handshake
 	handshake.mutex.Lock()
 	defer handshake.mutex.Unlock()
+
+	//Kyber1024 debug codes
+	//fmt.Printf("CreateMessageResponse() called.\n")
 
 	if handshake.state != handshakeInitiationConsumed {
 		return nil, errors.New("handshake initiation must be consumed first")
@@ -411,6 +467,12 @@ func (device *Device) CreateMessageResponse(peer *Peer) (*MessageResponse, error
 	aead.Seal(msg.Empty[:0], ZeroNonce[:], nil, handshake.hash[:])
 	handshake.mixHash(msg.Empty[:])
 
+	//
+	// Kyber1024 - copy ciphertext
+	msg.PqcCiphertext = handshake.pqcCiphertext
+	fmt.Printf("msg.pqcCiphertext = handshake.pqcCiphertext !!!\n")
+	//
+
 	handshake.state = handshakeResponseCreated
 
 	return &msg, nil
@@ -421,6 +483,9 @@ func (device *Device) ConsumeMessageResponse(msg *MessageResponse) *Peer {
 		return nil
 	}
 
+	//Kyber1024 debug codes
+	//fmt.Printf("ConsumeMessageResponse() called.\n")
+
 	// lookup handshake by receiver
 
 	lookup := device.indexTable.Lookup(msg.Receiver)
@@ -428,6 +493,16 @@ func (device *Device) ConsumeMessageResponse(msg *MessageResponse) *Peer {
 	if handshake == nil {
 		return nil
 	}
+
+	// ML-KEM-768 decapsulation
+	sharedKey, err := mlkem.Decapsulate(handshake.pqcKem.dk, msg.PqcCiphertext)
+	if err != nil {
+		fmt.Printf("mlkem.Decapsulate() failed: %v\n", err)
+	}
+	// Convert sharedKey ([]byte) to NoisePresharedKey
+	var psk NoisePresharedKey
+	copy(psk[:], sharedKey)
+	handshake.presharedKey = psk
 
 	var (
 		hash     [blake2s.Size]byte
