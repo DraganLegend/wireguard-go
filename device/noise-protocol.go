@@ -6,6 +6,7 @@
 package device
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"sync"
@@ -197,6 +198,19 @@ func (h *Handshake) mixKey(data []byte) {
 func init() {
 	InitialChainKey = blake2s.Sum256([]byte(NoiseConstruction))
 	mixHash(&InitialHash, &InitialChainKey, []byte(WGIdentifier))
+
+	// 驗證結構體大小
+	var msg MessageInitiation
+	initSize := binary.Size(msg)
+	if initSize != MessageInitiationSize {
+		panic(fmt.Sprintf("MessageInitiation struct size (%d) does not match constant (%d)", initSize, MessageInitiationSize))
+	}
+
+	var resp MessageResponse
+	respSize := binary.Size(resp)
+	if respSize != MessageResponseSize {
+		panic(fmt.Sprintf("MessageResponse struct size (%d) does not match constant (%d)", respSize, MessageResponseSize))
+	}
 }
 
 func (device *Device) CreateMessageInitiation(peer *Peer) (*MessageInitiation, error) {

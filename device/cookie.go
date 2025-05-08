@@ -74,6 +74,11 @@ func (st *CookieChecker) CheckMAC1(msg []byte) bool {
 	smac2 := size - blake2s.Size128
 	smac1 := smac2 - blake2s.Size128
 
+	// 確保消息長度足夠
+	if size < smac2 || smac1 < 0 {
+		return false
+	}
+
 	var mac1 [blake2s.Size128]byte
 
 	mac, _ := blake2s.New128(st.mac1.key[:])
@@ -217,6 +222,11 @@ func (st *CookieGenerator) AddMacs(msg []byte) {
 
 	smac2 := size - blake2s.Size128
 	smac1 := smac2 - blake2s.Size128
+
+	// 確保消息長度足夠
+	if size < smac2 || smac1 < 0 {
+		return
+	}
 
 	mac1 := msg[smac1:smac2]
 	mac2 := msg[smac2:]

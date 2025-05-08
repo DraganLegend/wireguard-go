@@ -318,7 +318,7 @@ func (device *Device) RoutineHandshake(id int) {
 			// check mac fields and maybe ratelimit
 
 			if !device.cookieChecker.CheckMAC1(elem.packet) {
-				device.log.Verbosef("Received packet with invalid mac1")
+				device.log.Verbosef("Received packet with invalid mac1, packet size: %d", len(elem.packet))
 				goto skip
 			}
 

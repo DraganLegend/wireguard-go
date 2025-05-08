@@ -130,6 +130,9 @@ func (peer *Peer) SendHandshakeInitiation(isRetry bool) error {
 	packet := writer.Bytes()
 	peer.cookieGenerator.AddMacs(packet)
 
+	// 驗證發送消息大小
+	peer.device.log.Verbosef("Sending handshake initiation packet size: %d, expected: %d", len(packet), MessageInitiationSize)
+
 	peer.timersAnyAuthenticatedPacketTraversal()
 	peer.timersAnyAuthenticatedPacketSent()
 
@@ -160,6 +163,9 @@ func (peer *Peer) SendHandshakeResponse() error {
 	binary.Write(writer, binary.LittleEndian, response)
 	packet := writer.Bytes()
 	peer.cookieGenerator.AddMacs(packet)
+
+	// 驗證發送消息大小
+	peer.device.log.Verbosef("Sending handshake response packet size: %d, expected: %d", len(packet), MessageResponseSize)
 
 	err = peer.BeginSymmetricSession()
 	if err != nil {
