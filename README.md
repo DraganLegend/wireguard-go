@@ -49,13 +49,10 @@ This will run on OpenBSD. It does not yet support sticky sockets. Fwmark is mapp
 This requires an installation of the latest version of [Go](https://go.dev/).
 
 ```
-$ git clone https://git.zx2c4.com/wireguard-go
-$ cd wireguard-go
-$ make
 => for QR-WireGuard(Quantum Resistant WireGuard)
-$ git clone https://github.com/ChunghanYi/wireguard-go
+$ git clone https://github.com/DraganLegend/wireguard-go.git
 $ cd wireguard-go
-$ go get github.com/symbolicsoft/kyber-k2so
+$ go get filippo.io/mlkem768@latest
 $ make
 ```
 
