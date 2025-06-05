@@ -56,6 +56,11 @@ $ go get filippo.io/mlkem768@latest
 $ make
 ```
 
+## Configuration
+
+Generate new keys for your interface using `wg genkey` and `wg pubkey`. This
+repository does not ship example keys or configuration files.
+
 ## License
 
     Copyright (C) 2017-2023 WireGuard LLC. All Rights Reserved.

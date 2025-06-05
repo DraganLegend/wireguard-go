@@ -1,1 +1,7 @@
 wireguard-go
+
+.DS_Store
+privatekey
+publickey
+wg0.conf
+*.bak
