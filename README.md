@@ -53,13 +53,23 @@ This requires an installation of the latest version of [Go](https://go.dev/).
 $ git clone https://github.com/DraganLegend/wireguard-go.git
 $ cd wireguard-go
 $ go get filippo.io/mlkem768@latest
+
 $ make
+```
+
+## Docker
+
+若想以容器方式快速部署，可使用本倉庫附帶的 `Dockerfile` 與 `docker-compose.yaml`，
+並在 `config/wg0.conf` 中填入對應的金鑰與連線資訊。
+
+```bash
+$ docker compose up --build
 ```
 
 ## Configuration
 
-Generate new keys for your interface using `wg genkey` and `wg pubkey`. This
-repository does not ship example keys or configuration files.
+Generate new keys for your interface using `wg genkey` and `wg pubkey`。
+本倉庫提供 `config/wg0.conf` 範例檔，記得自行產生私鑰與公鑰後填入。
 
 ## License
 

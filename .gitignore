@@ -4,4 +4,5 @@ wireguard-go
 privatekey
 publickey
 wg0.conf
+!config/wg0.conf
 *.bak
