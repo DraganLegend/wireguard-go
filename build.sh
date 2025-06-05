@@ -6,6 +6,7 @@ set -e
 if ! go list -m filippo.io/mlkem768 >/dev/null 2>&1; then
     echo "Fetching quantum resistant dependency filippo.io/mlkem768..."
     go get filippo.io/mlkem768@latest
+    go get gvisor.dev/gvisor/runsc@go
 fi
 
 # Build the binary using the Makefile
