@@ -6,3 +6,4 @@ publickey
 wg0.conf
 !config/wg0.conf
 *.bak
+AGENTS.md
