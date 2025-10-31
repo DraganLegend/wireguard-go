@@ -22,6 +22,31 @@ When an interface is running, you may use [`wg(8)`](https://git.zx2c4.com/wiregu
 
 To run with more logging you may set the environment variable `LOG_LEVEL=debug`.
 
+## Quantum‑Resistant Mode (ML‑KEM)
+
+This fork extends WireGuard‑Go to support **post‑quantum key exchange** using **ML‑KEM‑768 (CRYSTALS‑Kyber)** in addition to the classical X25519 handshake.
+
+### How It Works
+- When this binary initiates a new handshake, it automatically performs a **hybrid exchange (X25519 + ML‑KEM‑768)**.
+- If both peers use this PQC‑enabled version, the session key is derived from both classical and PQC shared secrets.
+- If one side still runs the unmodified WireGuard‑Go, the handshake will fail because the peer cannot parse the extended message length.
+
+
+### Testing
+To verify the PQC handshake:
+```bash
+sudo ./tests/netns.sh ./wireguard-go basic
+```
+You should see successful ping results between `192.168.241.1` and `192.168.241.2`, and debug logs containing:
+```
+msg.pqcCiphertext = handshake.pqcCiphertext !!!
+```
+
+### Configuration
+Normal `wg0.conf` files still work.  
+There is **no new syntax**; the program detects ML‑KEM automatically when acting as the initiator.
+
+
 ## Platforms
 
 ### Linux
@@ -70,6 +95,35 @@ $ docker compose up --build
 
 Generate new keys for your interface using `wg genkey` and `wg pubkey`。
 本倉庫提供 `config/wg0.conf` 範例檔，記得自行產生私鑰與公鑰後填入。
+
+---
+
+## 量子安全模式（ML-KEM）
+
+此分支延伸 WireGuard-Go，加入 **後量子金鑰交換（ML-KEM-768 / CRYSTALS-Kyber）**，與傳統的 X25519 握手並行運作。
+
+### 運作方式
+- 當此執行檔發起新握手時，會自動進行 **混合金鑰交換（X25519 + ML-KEM-768）**。
+- 若雙方節點都使用此版本，會根據傳統與 PQC 共享金鑰共同導出 session key。
+- 若一方仍為未修改的 WireGuard-Go，則因封包長度不符導致握手失敗。
+
+
+### 測試方式
+可使用內建測試腳本驗證握手：
+```bash
+sudo ./tests/netns.sh ./wireguard-go basic
+```
+若測試成功，應能在節點間（192.168.241.1 與 192.168.241.2）成功 Ping 通，且除錯日誌中出現：
+```
+msg.pqcCiphertext = handshake.pqcCiphertext !!!
+```
+
+### 設定說明
+一般的 `wg0.conf` 配置檔仍可正常使用，  
+系統會自動偵測並於發起端啟用 ML-KEM 模式。
+
+
+---
 
 ## License
 
