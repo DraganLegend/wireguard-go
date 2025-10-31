@@ -193,7 +193,7 @@ func (device *Device) RoutineReceiveIncoming(maxBatchSize int, recv conn.Receive
 				}
 
 			case MessageResponseType:
-				if len(packet) != MessageResponseSize {
+				if len(packet) != handshakeResponseBaseLen && len(packet) != handshakeResponseBaseLen+handshakeResponsePQCLen {
 					continue
 				}
 
@@ -380,18 +380,7 @@ func (device *Device) RoutineHandshake(id int) {
 
 		case MessageResponseType:
 
-			// unmarshal
-
-			var msg MessageResponse
-			err := msg.unmarshal(elem.packet)
-			if err != nil {
-				device.log.Errorf("Failed to decode response message")
-				goto skip
-			}
-
-			// consume response
-
-			peer := device.ConsumeMessageResponse(&msg)
+			peer := device.ConsumeMessageResponse(elem.packet)
 			if peer == nil {
 				device.log.Verbosef("Received invalid response message from %s", elem.endpoint.DstToString())
 				goto skip
@@ -410,9 +399,7 @@ func (device *Device) RoutineHandshake(id int) {
 
 			// derive keypair
 
-			err = peer.BeginSymmetricSession()
-
-			if err != nil {
+			if err := peer.BeginSymmetricSession(); err != nil {
 				device.log.Errorf("%v - Failed to derive keypair: %v", peer, err)
 				goto skip
 			}

@@ -77,6 +77,11 @@ const (
 )
 
 const (
+	handshakeResponseBaseLen = MessageResponseSize - mlkem.CiphertextSize
+	handshakeResponsePQCLen  = mlkem.CiphertextSize
+)
+
+const (
 	MessageTransportOffsetReceiver = 4
 	MessageTransportOffsetCounter  = 8
 	MessageTransportOffsetContent  = 16
@@ -124,15 +129,15 @@ type MessageTransport struct {
 }
 
 type MessageCookieReply struct {
-        Type     uint32
-        Receiver uint32
-        Nonce    [chacha20poly1305.NonceSizeX]byte
-        Cookie   [blake2s.Size128 + poly1305.TagSize]byte
+	Type     uint32
+	Receiver uint32
+	Nonce    [chacha20poly1305.NonceSizeX]byte
+	Cookie   [blake2s.Size128 + poly1305.TagSize]byte
 }
 
 // ML-KEM-768
 type noisePqcKem struct {
-        dk *mlkem.DecapsulationKey
+	dk *mlkem.DecapsulationKey
 }
 
 //
@@ -144,13 +149,22 @@ func (msg *MessageInitiation) unmarshal(b []byte) error {
 		return errMessageLengthMismatch
 	}
 
-	msg.Type = binary.LittleEndian.Uint32(b)
-	msg.Sender = binary.LittleEndian.Uint32(b[4:])
-	copy(msg.Ephemeral[:], b[8:])
-	copy(msg.Static[:], b[8+len(msg.Ephemeral):])
-	copy(msg.Timestamp[:], b[8+len(msg.Ephemeral)+len(msg.Static):])
-	copy(msg.MAC1[:], b[8+len(msg.Ephemeral)+len(msg.Static)+len(msg.Timestamp):])
-	copy(msg.MAC2[:], b[8+len(msg.Ephemeral)+len(msg.Static)+len(msg.Timestamp)+len(msg.MAC1):])
+	offset := 0
+	msg.Type = binary.LittleEndian.Uint32(b[offset:])
+	offset += 4
+	msg.Sender = binary.LittleEndian.Uint32(b[offset:])
+	offset += 4
+	copy(msg.Ephemeral[:], b[offset:offset+len(msg.Ephemeral)])
+	offset += len(msg.Ephemeral)
+	copy(msg.Static[:], b[offset:offset+len(msg.Static)])
+	offset += len(msg.Static)
+	copy(msg.Timestamp[:], b[offset:offset+len(msg.Timestamp)])
+	offset += len(msg.Timestamp)
+	copy(msg.PqcPublickey[:], b[offset:offset+mlkem.EncapsulationKeySize])
+	offset += mlkem.EncapsulationKeySize
+	copy(msg.MAC1[:], b[offset:offset+len(msg.MAC1)])
+	offset += len(msg.MAC1)
+	copy(msg.MAC2[:], b[offset:offset+len(msg.MAC2)])
 
 	return nil
 }
@@ -160,29 +174,59 @@ func (msg *MessageInitiation) marshal(b []byte) error {
 		return errMessageLengthMismatch
 	}
 
-	binary.LittleEndian.PutUint32(b, msg.Type)
-	binary.LittleEndian.PutUint32(b[4:], msg.Sender)
-	copy(b[8:], msg.Ephemeral[:])
-	copy(b[8+len(msg.Ephemeral):], msg.Static[:])
-	copy(b[8+len(msg.Ephemeral)+len(msg.Static):], msg.Timestamp[:])
-	copy(b[8+len(msg.Ephemeral)+len(msg.Static)+len(msg.Timestamp):], msg.MAC1[:])
-	copy(b[8+len(msg.Ephemeral)+len(msg.Static)+len(msg.Timestamp)+len(msg.MAC1):], msg.MAC2[:])
+	offset := 0
+	binary.LittleEndian.PutUint32(b[offset:], msg.Type)
+	offset += 4
+	binary.LittleEndian.PutUint32(b[offset:], msg.Sender)
+	offset += 4
+	copy(b[offset:], msg.Ephemeral[:])
+	offset += len(msg.Ephemeral)
+	copy(b[offset:], msg.Static[:])
+	offset += len(msg.Static)
+	copy(b[offset:], msg.Timestamp[:])
+	offset += len(msg.Timestamp)
+	copy(b[offset:], msg.PqcPublickey[:])
+	offset += mlkem.EncapsulationKeySize
+	copy(b[offset:], msg.MAC1[:])
+	offset += len(msg.MAC1)
+	copy(b[offset:], msg.MAC2[:])
 
 	return nil
 }
 
 func (msg *MessageResponse) unmarshal(b []byte) error {
-	if len(b) != MessageResponseSize {
+	var includePQC bool
+	switch len(b) {
+	case handshakeResponseBaseLen:
+		includePQC = false
+	case handshakeResponseBaseLen + handshakeResponsePQCLen:
+		includePQC = true
+	default:
 		return errMessageLengthMismatch
 	}
 
-	msg.Type = binary.LittleEndian.Uint32(b)
-	msg.Sender = binary.LittleEndian.Uint32(b[4:])
-	msg.Receiver = binary.LittleEndian.Uint32(b[8:])
-	copy(msg.Ephemeral[:], b[12:])
-	copy(msg.Empty[:], b[12+len(msg.Ephemeral):])
-	copy(msg.MAC1[:], b[12+len(msg.Ephemeral)+len(msg.Empty):])
-	copy(msg.MAC2[:], b[12+len(msg.Ephemeral)+len(msg.Empty)+len(msg.MAC1):])
+	offset := 0
+	msg.Type = binary.LittleEndian.Uint32(b[offset:])
+	offset += 4
+	msg.Sender = binary.LittleEndian.Uint32(b[offset:])
+	offset += 4
+	msg.Receiver = binary.LittleEndian.Uint32(b[offset:])
+	offset += 4
+	copy(msg.Ephemeral[:], b[offset:offset+len(msg.Ephemeral)])
+	offset += len(msg.Ephemeral)
+	copy(msg.Empty[:], b[offset:offset+len(msg.Empty)])
+	offset += len(msg.Empty)
+
+	if includePQC {
+		copy(msg.PqcCiphertext[:], b[offset:offset+handshakeResponsePQCLen])
+		offset += handshakeResponsePQCLen
+	} else {
+		setZero(msg.PqcCiphertext[:])
+	}
+
+	copy(msg.MAC1[:], b[offset:offset+len(msg.MAC1)])
+	offset += len(msg.MAC1)
+	copy(msg.MAC2[:], b[offset:offset+len(msg.MAC2)])
 
 	return nil
 }
@@ -192,13 +236,22 @@ func (msg *MessageResponse) marshal(b []byte) error {
 		return errMessageLengthMismatch
 	}
 
-	binary.LittleEndian.PutUint32(b, msg.Type)
-	binary.LittleEndian.PutUint32(b[4:], msg.Sender)
-	binary.LittleEndian.PutUint32(b[8:], msg.Receiver)
-	copy(b[12:], msg.Ephemeral[:])
-	copy(b[12+len(msg.Ephemeral):], msg.Empty[:])
-	copy(b[12+len(msg.Ephemeral)+len(msg.Empty):], msg.MAC1[:])
-	copy(b[12+len(msg.Ephemeral)+len(msg.Empty)+len(msg.MAC1):], msg.MAC2[:])
+	offset := 0
+	binary.LittleEndian.PutUint32(b[offset:], msg.Type)
+	offset += 4
+	binary.LittleEndian.PutUint32(b[offset:], msg.Sender)
+	offset += 4
+	binary.LittleEndian.PutUint32(b[offset:], msg.Receiver)
+	offset += 4
+	copy(b[offset:], msg.Ephemeral[:])
+	offset += len(msg.Ephemeral)
+	copy(b[offset:], msg.Empty[:])
+	offset += len(msg.Empty)
+	copy(b[offset:], msg.PqcCiphertext[:])
+	offset += handshakeResponsePQCLen
+	copy(b[offset:], msg.MAC1[:])
+	offset += len(msg.MAC1)
+	copy(b[offset:], msg.MAC2[:])
 
 	return nil
 }
@@ -217,16 +270,16 @@ func (msg *MessageCookieReply) unmarshal(b []byte) error {
 }
 
 func (msg *MessageCookieReply) marshal(b []byte) error {
-        if len(b) != MessageCookieReplySize {
-                return errMessageLengthMismatch
-        }
+	if len(b) != MessageCookieReplySize {
+		return errMessageLengthMismatch
+	}
 
-        binary.LittleEndian.PutUint32(b, msg.Type)
-        binary.LittleEndian.PutUint32(b[4:], msg.Receiver)
-        copy(b[8:], msg.Nonce[:])
-        copy(b[8+len(msg.Nonce):], msg.Cookie[:])
+	binary.LittleEndian.PutUint32(b, msg.Type)
+	binary.LittleEndian.PutUint32(b[4:], msg.Receiver)
+	copy(b[8:], msg.Nonce[:])
+	copy(b[8+len(msg.Nonce):], msg.Cookie[:])
 
-        return nil
+	return nil
 }
 
 type Handshake struct {
@@ -584,15 +637,25 @@ func (device *Device) CreateMessageResponse(peer *Peer) (*MessageResponse, error
 	return &msg, nil
 }
 
-func (device *Device) ConsumeMessageResponse(msg *MessageResponse) *Peer {
+func (device *Device) ConsumeMessageResponse(packet []byte) *Peer {
+	switch len(packet) {
+	case handshakeResponseBaseLen:
+		return device.consumeClassicResponse(packet)
+	case handshakeResponseBaseLen + handshakeResponsePQCLen:
+		return device.consumePQCResponse(packet)
+	default:
+		return nil
+	}
+}
+
+func (device *Device) consumeClassicResponse(packet []byte) *Peer {
+	var msg MessageResponse
+	if err := msg.unmarshal(packet); err != nil {
+		return nil
+	}
 	if msg.Type != MessageResponseType {
 		return nil
 	}
-
-	//Kyber1024 debug codes
-	//fmt.Printf("ConsumeMessageResponse() called.\n")
-
-	// lookup handshake by receiver
 
 	lookup := device.indexTable.Lookup(msg.Receiver)
 	handshake := lookup.handshake
@@ -600,15 +663,39 @@ func (device *Device) ConsumeMessageResponse(msg *MessageResponse) *Peer {
 		return nil
 	}
 
-	// ML-KEM-768 decapsulation
+	return device.finalizeConsumedResponse(&msg, handshake, lookup.peer)
+}
+
+func (device *Device) consumePQCResponse(packet []byte) *Peer {
+	var msg MessageResponse
+	if err := msg.unmarshal(packet); err != nil {
+		return nil
+	}
+	if msg.Type != MessageResponseType {
+		return nil
+	}
+
+	lookup := device.indexTable.Lookup(msg.Receiver)
+	handshake := lookup.handshake
+	if handshake == nil {
+		return nil
+	}
+
 	sharedKey, err := mlkem.Decapsulate(handshake.pqcKem.dk, msg.PqcCiphertext[:])
 	if err != nil {
 		fmt.Printf("mlkem.Decapsulate() failed: %v\n", err)
 	}
-	// Convert sharedKey ([]byte) to NoisePresharedKey
 	var psk NoisePresharedKey
 	copy(psk[:], sharedKey)
 	handshake.presharedKey = psk
+
+	return device.finalizeConsumedResponse(&msg, handshake, lookup.peer)
+}
+
+func (device *Device) finalizeConsumedResponse(msg *MessageResponse, handshake *Handshake, peer *Peer) *Peer {
+	if peer == nil {
+		return nil
+	}
 
 	var (
 		hash     [blake2s.Size]byte
@@ -616,8 +703,6 @@ func (device *Device) ConsumeMessageResponse(msg *MessageResponse) *Peer {
 	)
 
 	ok := func() bool {
-		// lock handshake state
-
 		handshake.mutex.RLock()
 		defer handshake.mutex.RUnlock()
 
@@ -625,12 +710,8 @@ func (device *Device) ConsumeMessageResponse(msg *MessageResponse) *Peer {
 			return false
 		}
 
-		// lock private key for reading
-
 		device.staticIdentity.RLock()
 		defer device.staticIdentity.RUnlock()
-
-		// finish 3-way DH
 
 		mixHash(&hash, &handshake.hash, msg.Ephemeral[:])
 		mixKey(&chainKey, &handshake.chainKey, msg.Ephemeral[:])
@@ -649,8 +730,6 @@ func (device *Device) ConsumeMessageResponse(msg *MessageResponse) *Peer {
 		mixKey(&chainKey, &chainKey, ss[:])
 		setZero(ss[:])
 
-		// add preshared key (psk)
-
 		var tau [blake2s.Size]byte
 		var key [chacha20poly1305.KeySize]byte
 		KDF3(
@@ -662,11 +741,8 @@ func (device *Device) ConsumeMessageResponse(msg *MessageResponse) *Peer {
 		)
 		mixHash(&hash, &hash, tau[:])
 
-		// authenticate transcript
-
 		aead, _ := chacha20poly1305.New(key[:])
-		_, err = aead.Open(nil, ZeroNonce[:], msg.Empty[:], hash[:])
-		if err != nil {
+		if _, err := aead.Open(nil, ZeroNonce[:], msg.Empty[:], hash[:]); err != nil {
 			return false
 		}
 		mixHash(&hash, &hash, msg.Empty[:])
@@ -674,24 +750,22 @@ func (device *Device) ConsumeMessageResponse(msg *MessageResponse) *Peer {
 	}()
 
 	if !ok {
+		setZero(hash[:])
+		setZero(chainKey[:])
 		return nil
 	}
 
-	// update handshake state
-
 	handshake.mutex.Lock()
-
 	handshake.hash = hash
 	handshake.chainKey = chainKey
 	handshake.remoteIndex = msg.Sender
 	handshake.state = handshakeResponseConsumed
-
 	handshake.mutex.Unlock()
 
 	setZero(hash[:])
 	setZero(chainKey[:])
 
-	return lookup.peer
+	return peer
 }
 
 /* Derives a new keypair from the current handshake state
