@@ -118,6 +118,28 @@ sudo ./tests/netns.sh ./wireguard-go basic
 msg.pqcCiphertext = handshake.pqcCiphertext !!!
 ```
 
+## Windows 測試指南 (Testing on Windows)
+本專案包含一個專用的 PowerShell 腳本，用於在 Windows 環境下驗證 ML-KEM PQC (後量子加密) 的握手功能。
+
+### 前置需求
+1. 編譯完成的 `wireguard-go.exe`。
+2. **Wintun 驅動**：請確保 `wintun.dll` 位於 `wireguard-go.exe` 同一層目錄中 (可從 [wintun.net](https://www.wintun.net/) 下載)。
+3. **PsTools (PsExec64)**：由於官方程式碼限制 Named Pipe 擁有者必須為 SYSTEM，您需要下載 [PsTools](https://learn.microsoft.com/en-us/sysinternals/downloads/pstools) 並將 `PsExec64.exe` 放至同目錄下。
+
+### 執行測試 (需使用 SYSTEM 權限)
+由於 Windows 安全性限制，一般的管理員權限無法滿足程式碼中 `O:SY` (Owner: System) 的要求，因此必須透過 PsExec 切換至系統帳號執行。
+
+1. 以 **系統管理員身分** 開啟 PowerShell。
+2. 執行以下指令以啟動 SYSTEM 權限的終端機：
+   ```powershell
+   .\PsExec64.exe -s -i powershell.exe
+   ```
+3. 在跳出的 新藍色視窗 中，切換到專案目錄並執行測試：
+```powershell
+cd C:\Path\To\wireguard-go
+.\tests\windows_test.ps1 .\wireguard-go.exe
+```
+
 ### 設定說明
 一般的 `wg0.conf` 配置檔仍可正常使用，  
 系統會自動偵測並於發起端啟用 ML-KEM 模式。
